@@ -140,7 +140,7 @@ impl Searchable for Everything {
             log::info!("opened file");
         }
     }
-    fn plugin_id(&self) -> &PluginId {
-        &self.id
+    fn plugin_id(&self) -> PluginId {
+        self.id.clone()
     }
 }
