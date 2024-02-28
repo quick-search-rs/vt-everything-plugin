@@ -234,7 +234,7 @@ fn default_config() -> quick_search_lib::Config {
                 ("Date Run", 12),
             ]
             .into_iter()
-            .map(|(k, v)| (k.into(), v).into())
+            .map(quick_search_lib::EnumEntry::from)
             .collect(),
         },
     );
@@ -242,7 +242,7 @@ fn default_config() -> quick_search_lib::Config {
         "Sort Order".into(),
         quick_search_lib::EntryType::Enum {
             value: 0,
-            options: vec![("Ascending", 0), ("Descending", 1)].into_iter().map(|(k, v)| (k.into(), v).into()).collect(),
+            options: vec![("Ascending", 0), ("Descending", 1)].into_iter().map(quick_search_lib::EnumEntry::from).collect(),
         },
     );
     config
