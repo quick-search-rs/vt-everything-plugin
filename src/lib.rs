@@ -27,11 +27,21 @@ fn get_searchable(id: PluginId) -> Searchable_TO<'static, RBox<()>> {
 #[derive(Debug, Clone)]
 struct Everything {
     id: PluginId,
+    config: quick_search_lib::Config,
 }
 
 impl Everything {
     fn new(id: PluginId) -> Self {
-        Self { id }
+        let mut config = quick_search_lib::Config::default();
+        config.insert(
+            "Max Results".into(),
+            quick_search_lib::EntryType::Int {
+                value: 50,
+                min: Some(1).into(),
+                max: Some(250).into(),
+            },
+        );
+        Self { id, config }
     }
 }
 
@@ -39,12 +49,15 @@ impl Searchable for Everything {
     fn search(&self, query: RString) -> RVec<SearchResult> {
         let mut res: Vec<SearchResult> = vec![];
 
+        let max_results = self.config.get("Max Results").and_then(|v| v.as_int()).unwrap_or(50) as u32; // extras in case of duplicates
+
         if let Ok(query_as_wchar) = U16CString::from_str(query) {
             unsafe {
                 Everything_SetSearchW(query_as_wchar.as_ptr());
             }
             if unsafe { Everything_QueryW(1) } == 1 {
-                let f = unsafe { Everything_GetNumResults() }.clamp(0, 100);
+                let f = unsafe { Everything_GetNumResults() };
+                println!("found {} results", f);
                 for i in 0..f {
                     let filename = unsafe {
                         let ptr = Everything_GetResultFileNameW(i);
@@ -88,15 +101,26 @@ impl Searchable for Everything {
                     //         super::open(&path);
                     //     })),
                     // });
-                    res.push(SearchResult::new(&fullfile).set_context(&format!("{}\\{}", path, fullfile)))
+
+                    // do not add duplicates
+                    let result = SearchResult::new(&fullfile).set_context(&format!("{}\\{}", path, fullfile));
+                    if res.contains(&result) {
+                        continue;
+                    } else {
+                        res.push(result);
+                        if res.len() >= max_results as usize {
+                            break;
+                        }
+                    }
                 }
             }
         } else {
-            log::error!("failed to convert query to wchar");
+            eprintln!("failed to convert query to wchar");
         }
 
         res.sort_by(|a, b| a.title().cmp(b.title()));
-        res.dedup_by(|a, b| a.title() == b.title());
+        res.dedup();
+        res.truncate(max_results as usize);
 
         res.into()
     }
@@ -116,31 +140,41 @@ impl Searchable for Everything {
         //         log::!("failed to copy to clipboard: {}", s);
         //     }
         // } else {
-        //     log::error!("failed to copy to clipboard: {}", s);
+        //     eprintln!("failed to copy to clipboard: {}", s);
         // }
 
         // finish up, above is a clipboard example
-        log::info!("opening file: {}", result.context());
+        println!("opening file: {}", result.context());
 
         let path = {
             match std::path::PathBuf::from_str(result.context()) {
                 Ok(p) => p,
                 Err(e) => {
-                    log::error!("failed to get path: {}", e);
+                    eprintln!("failed to get path: {}", e);
                     return;
                 }
             }
         };
 
-        log::trace!("path: {:?}", path);
+        println!("path: {:?}", path);
 
         if let Err(e) = opener::open(path) {
-            log::error!("failed to open file: {}", e);
+            eprintln!("failed to open file: {}", e);
         } else {
-            log::info!("opened file");
+            println!("opened file");
         }
     }
     fn plugin_id(&self) -> PluginId {
         self.id.clone()
+    }
+    fn get_config_entries(&self) -> quick_search_lib::Config {
+        self.config.clone()
+    }
+    fn lazy_load_config(&mut self, config: quick_search_lib::Config) {
+        self.config = config;
+        unsafe {
+            Everything_SetMax(self.config.get("Max Results").and_then(|v| v.as_int()).unwrap_or(50) as u32 * 4);
+            // some extras in case of duplicates, should never run into memory allocation issues
+        }
     }
 }
