@@ -32,16 +32,7 @@ struct Everything {
 
 impl Everything {
     fn new(id: PluginId) -> Self {
-        let mut config = quick_search_lib::Config::default();
-        config.insert(
-            "Max Results".into(),
-            quick_search_lib::EntryType::Int {
-                value: 50,
-                min: Some(1).into(),
-                max: Some(250).into(),
-            },
-        );
-        Self { id, config }
+        Self { id, config: default_config() }
     }
 }
 
@@ -168,7 +159,7 @@ impl Searchable for Everything {
         self.id.clone()
     }
     fn get_config_entries(&self) -> quick_search_lib::Config {
-        self.config.clone()
+        default_config()
     }
     fn lazy_load_config(&mut self, config: quick_search_lib::Config) {
         self.config = config;
@@ -176,5 +167,83 @@ impl Searchable for Everything {
             Everything_SetMax(self.config.get("Max Results").and_then(|v| v.as_int()).unwrap_or(50) as u32 * 4);
             // some extras in case of duplicates, should never run into memory allocation issues
         }
+        let sort_by = self.config.get("Sort By").and_then(|v| v.as_enum()).unwrap_or(0);
+        let sort_order = self.config.get("Sort Order").and_then(|v| v.as_enum()).unwrap_or(0);
+        // if sort_by == 0 and sort_order == 0, then sort_dword = 1
+        let sort_dword = (sort_by * 2 + sort_order) + 1;
+        unsafe {
+            Everything_SetSort(sort_dword as u32);
+        }
     }
+}
+
+// EVERYTHING_SORT_NAME_ASCENDING                      (1)
+// EVERYTHING_SORT_NAME_DESCENDING                     (2)
+// EVERYTHING_SORT_PATH_ASCENDING                      (3)
+// EVERYTHING_SORT_PATH_DESCENDING                     (4)
+// EVERYTHING_SORT_SIZE_ASCENDING                      (5)
+// EVERYTHING_SORT_SIZE_DESCENDING                     (6)
+// EVERYTHING_SORT_EXTENSION_ASCENDING                 (7)
+// EVERYTHING_SORT_EXTENSION_DESCENDING                (8)
+// EVERYTHING_SORT_TYPE_NAME_ASCENDING                 (9)
+// EVERYTHING_SORT_TYPE_NAME_DESCENDING                (10)
+// EVERYTHING_SORT_DATE_CREATED_ASCENDING              (11)
+// EVERYTHING_SORT_DATE_CREATED_DESCENDING             (12)
+// EVERYTHING_SORT_DATE_MODIFIED_ASCENDING             (13)
+// EVERYTHING_SORT_DATE_MODIFIED_DESCENDING            (14)
+// EVERYTHING_SORT_ATTRIBUTES_ASCENDING                (15)
+// EVERYTHING_SORT_ATTRIBUTES_DESCENDING               (16)
+// EVERYTHING_SORT_FILE_LIST_FILENAME_ASCENDING        (17)
+// EVERYTHING_SORT_FILE_LIST_FILENAME_DESCENDING       (18)
+// EVERYTHING_SORT_RUN_COUNT_ASCENDING                 (19)
+// EVERYTHING_SORT_RUN_COUNT_DESCENDING                (20)
+// EVERYTHING_SORT_DATE_RECENTLY_CHANGED_ASCENDING     (21)
+// EVERYTHING_SORT_DATE_RECENTLY_CHANGED_DESCENDING    (22)
+// EVERYTHING_SORT_DATE_ACCESSED_ASCENDING             (23)
+// EVERYTHING_SORT_DATE_ACCESSED_DESCENDING            (24)
+// EVERYTHING_SORT_DATE_RUN_ASCENDING                  (25)
+// EVERYTHING_SORT_DATE_RUN_DESCENDING                 (26)
+
+fn default_config() -> quick_search_lib::Config {
+    let mut config = quick_search_lib::Config::default();
+    config.insert(
+        "Max Results".into(),
+        quick_search_lib::EntryType::Int {
+            value: 50,
+            min: Some(1).into(),
+            max: Some(250).into(),
+        },
+    );
+    config.insert(
+        "Sort By".into(),
+        quick_search_lib::EntryType::Enum {
+            value: 0,
+            options: vec![
+                ("Name", 0),
+                ("Path", 1),
+                ("Size", 2),
+                ("Extension", 3),
+                ("Type Name", 4),
+                ("Date Created", 5),
+                ("Date Modified", 6),
+                ("Attributes", 7),
+                ("File List Filename", 8),
+                ("Run Count", 9),
+                ("Date Recently Changed", 10),
+                ("Date Accessed", 11),
+                ("Date Run", 12),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.into(), v).into())
+            .collect(),
+        },
+    );
+    config.insert(
+        "Sort Order".into(),
+        quick_search_lib::EntryType::Enum {
+            value: 0,
+            options: vec![("Ascending", 0), ("Descending", 1)].into_iter().map(|(k, v)| (k.into(), v).into()).collect(),
+        },
+    );
+    config
 }

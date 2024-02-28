@@ -20,4 +20,4 @@ opener = "0.6.1"
 [profile.release]
 lto = true
 codegen-units = 1
-opt-level = "z" 
+opt-level = "z"
