@@ -8,7 +8,7 @@ use abi_stable::{
     std_types::{RBox, RStr, RString, RVec},
 };
 use everything_sys::*;
-use quick_search_lib::{ColoredChar, PluginId, SearchLib, SearchLib_Ref, SearchResult, Searchable, Searchable_TO};
+use quick_search_lib::{ColoredChar, Log, PluginId, ScopedLogger, SearchLib, SearchLib_Ref, SearchResult, Searchable, Searchable_TO};
 use widestring::U16CString;
 
 static NAME: &str = "Everything";
@@ -19,20 +19,22 @@ pub fn get_library() -> SearchLib_Ref {
 }
 
 #[sabi_extern_fn]
-fn get_searchable(id: PluginId) -> Searchable_TO<'static, RBox<()>> {
-    let this = Everything::new(id);
+fn get_searchable(id: PluginId, logger: ScopedLogger) -> Searchable_TO<'static, RBox<()>> {
+    logger.trace("creating new Everything instance");
+    let this = Everything::new(id, logger);
+    this.logger.info(&format!("created new {}", this.name()));
     Searchable_TO::from_value(this, TD_Opaque)
 }
 
-#[derive(Debug, Clone)]
 struct Everything {
     id: PluginId,
     config: quick_search_lib::Config,
+    logger: ScopedLogger,
 }
 
 impl Everything {
-    fn new(id: PluginId) -> Self {
-        Self { id, config: default_config() }
+    fn new(id: PluginId, logger: ScopedLogger) -> Self {
+        Self { id, config: default_config(), logger }
     }
 }
 
@@ -41,118 +43,112 @@ impl Searchable for Everything {
         let mut res: Vec<SearchResult> = vec![];
 
         let max_results = self.config.get("Max Results").and_then(|v| v.as_int()).unwrap_or(50) as u32; // extras in case of duplicates
+        self.logger.info(&format!("max results: {}", max_results));
 
         if let Ok(query_as_wchar) = U16CString::from_str(query) {
+            self.logger.info(&format!("searching for: `{}`", query_as_wchar.to_string_lossy()));
             unsafe {
+                self.logger.trace("setting search");
                 Everything_SetSearchW(query_as_wchar.as_ptr());
+                self.logger.trace("search set");
             }
             if unsafe { Everything_QueryW(1) } == 1 {
+                self.logger.trace("query successful");
+                self.logger.trace("getting num results");
                 let f = unsafe { Everything_GetNumResults() };
-                println!("found {} results", f);
+                self.logger.info(&format!("found {} results", f));
                 for i in 0..f {
+                    self.logger.trace(&format!("getting result {}", i));
                     let filename = unsafe {
                         let ptr = Everything_GetResultFileNameW(i);
                         if ptr.is_null() {
+                            self.logger.warn(&format!("Filename is null for result {}", i));
                             continue;
                         } else {
                             U16CString::from_ptr_str(ptr).to_string_lossy()
                         }
                     };
+                    self.logger.info(&format!("filename: {}", filename));
                     let extension = unsafe {
                         let ptr = Everything_GetResultExtensionW(i);
-                        if !ptr.is_null() {
-                            Some(U16CString::from_ptr_str(ptr).to_string_lossy())
-                        } else {
+                        if ptr.is_null() {
                             None
+                        } else {
+                            Some(U16CString::from_ptr_str(ptr).to_string_lossy())
                         }
                     };
+                    self.logger.info(&format!("extension: {:?}", extension));
                     let path = unsafe {
                         let ptr = Everything_GetResultPathW(i);
                         if ptr.is_null() {
+                            self.logger.warn(&format!("Path is null for result {}", i));
                             continue;
                         } else {
                             U16CString::from_ptr_str(ptr).to_string_lossy()
                         }
                     };
+                    self.logger.info(&format!("path: {}", path));
                     // let resstr = format!("{}", filename);
                     let fullfile = match extension {
                         Some(extension) => format!("{}.{}", filename, extension),
                         None => filename.clone(),
                     };
-
-                    // res.push(SearchResult {
-                    //     source: Box::new(*self),
-                    //     name: fullfile.clone(),
-                    //     context: Some(format!("{}\\{}", path, fullfile)),
-                    //     action: Some(Box::new(move || {
-                    //         // open file
-
-                    //         let path = std::path::PathBuf::from(format!("{}\\{}", path, fullfile));
-
-                    //         super::open(&path);
-                    //     })),
-                    // });
+                    self.logger.info(&format!("fullfile: {}", fullfile));
 
                     // do not add duplicates
                     let result = SearchResult::new(&fullfile).set_context(&format!("{}\\{}", path, fullfile));
                     if res.contains(&result) {
+                        self.logger.trace(&format!("duplicate result: {}", fullfile));
                         continue;
                     } else {
                         res.push(result);
                         if res.len() >= max_results as usize {
+                            self.logger.trace("max results reached");
                             break;
                         }
                     }
                 }
+            } else {
+                self.logger.error("failed to query");
             }
         } else {
-            eprintln!("failed to convert query to wchar");
+            self.logger.error("failed to convert query to wchar");
         }
 
+        self.logger.trace("sorting results");
         res.sort_by(|a, b| a.title().cmp(b.title()));
+        self.logger.trace("deduping results");
         res.dedup();
+        self.logger.trace("truncating results");
         res.truncate(max_results as usize);
-
+        self.logger.trace("returning results");
         res.into()
     }
     fn name(&self) -> RStr<'static> {
         NAME.into()
     }
     fn colored_name(&self) -> RVec<quick_search_lib::ColoredChar> {
-        // can be dynamic although it's iffy how it might be used
         ColoredChar::from_string(NAME, 0xFF7F00FF)
     }
     fn execute(&self, result: &SearchResult) {
-        // let s = result.extra_info();
-        // if let Ok::<clipboard::ClipboardContext, Box<dyn std::error::Error>>(mut clipboard) = clipboard::ClipboardProvider::new() {
-        //     if let Ok(()) = clipboard::ClipboardProvider::set_contents(&mut clipboard, s.to_owned()) {
-        //         log::!("copied to clipboard: {}", s);
-        //     } else {
-        //         log::!("failed to copy to clipboard: {}", s);
-        //     }
-        // } else {
-        //     eprintln!("failed to copy to clipboard: {}", s);
-        // }
-
-        // finish up, above is a clipboard example
-        println!("opening file: {}", result.context());
+        self.logger.info(&format!("opening file: {}", result.context()));
 
         let path = {
             match std::path::PathBuf::from_str(result.context()) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("failed to get path: {}", e);
+                    self.logger.error(&format!("failed to get path: {}", e));
                     return;
                 }
             }
         };
 
-        println!("path: {:?}", path);
+        self.logger.info(&format!("path: {:?}", path));
 
         if let Err(e) = opener::open(path) {
-            eprintln!("failed to open file: {}", e);
+            self.logger.error(&format!("failed to open file: {}", e));
         } else {
-            println!("opened file");
+            self.logger.trace("opened file");
         }
     }
     fn plugin_id(&self) -> PluginId {
@@ -162,18 +158,27 @@ impl Searchable for Everything {
         default_config()
     }
     fn lazy_load_config(&mut self, config: quick_search_lib::Config) {
+        self.logger.trace("loading config");
         self.config = config;
+        self.logger.trace("config loaded");
+        self.logger.trace("setting max results");
         unsafe {
             Everything_SetMax(self.config.get("Max Results").and_then(|v| v.as_int()).unwrap_or(50) as u32 * 4);
             // some extras in case of duplicates, should never run into memory allocation issues
         }
+        self.logger.trace("Max results set");
         let sort_by = self.config.get("Sort By").and_then(|v| v.as_enum()).unwrap_or(0);
+        self.logger.info(&format!("sort_by: {}", sort_by));
         let sort_order = self.config.get("Sort Order").and_then(|v| v.as_enum()).unwrap_or(0);
+        self.logger.info(&format!("sort_order: {}", sort_order));
         // if sort_by == 0 and sort_order == 0, then sort_dword = 1
         let sort_dword = (sort_by * 2 + sort_order) + 1;
+        self.logger.info(&format!("sort_dword: {}", sort_dword));
+        self.logger.trace("setting sort");
         unsafe {
             Everything_SetSort(sort_dword as u32);
         }
+        self.logger.trace("sort set");
     }
 }
 
